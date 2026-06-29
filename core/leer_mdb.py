@@ -6,10 +6,55 @@ from pathlib import Path
 from core.jet4 import conectar_mdb, recuperar_clave_jet4
 
 STROKE_MAP = {
-    1: "Crawl", 2: "Espalda", 3: "Pecho", 4: "Mariposa",
-    5: "Comb. Individual", 6: "Libre", 7: "Tablita",
+    1: "Crawl",
+    2: "Espalda",
+    3: "Pecho",
+    4: "Mariposa",
+    5: "Comb. Individual",
+    6: "Crawl",
+    7: "Tablita",
+    "A": "Crawl",
+    "B": "Espalda",
+    "C": "Pecho",
+    "D": "Mariposa",
+    "E": "Comb. Individual",
+    "a": "Crawl",
+    "b": "Espalda",
+    "c": "Pecho",
+    "d": "Mariposa",
+    "e": "Comb. Individual",
+    "Freestyle": "Crawl",
+    "Backstroke": "Espalda",
+    "Breaststroke": "Pecho",
+    "Butterfly": "Mariposa",
+    "Individual Medley": "Comb. Individual",
+    "IM": "Comb. Individual",
+    "Medley Relay": "Relevo Combinado",
+    "Freestyle Relay": "Relevo Crawl",
+    "Kick": "Tablita",
 }
-SEX_MAP = {"G": "F", "F": "F", "B": "M", "M": "M", "X": "X"}
+SEX_MAP = {
+    "F": "F",
+    "M": "M",
+    "X": "F",
+    "B": "X",
+    "S": "F",
+    "H": "M",
+    "G": "F",
+}
+COURSE_MAP = {
+    "1": "Y",
+    "2": "S",
+    "3": "L",
+    "S": "S",
+    "L": "L",
+    "Y": "Y",
+}
+_STROKE_CASEFOLD_MAP = {
+    str(key).casefold(): value
+    for key, value in STROKE_MAP.items()
+    if isinstance(key, str)
+}
 
 
 def _valor(fila, indice, nombre):
@@ -35,6 +80,28 @@ def _iso(valor):
     if hasattr(valor, "isoformat"):
         return valor.isoformat()
     return str(valor).split(" ", 1)[0]
+
+
+def _normalizar_stroke(valor):
+    original = "" if valor is None else str(valor).strip()
+    try:
+        clave = int(valor)
+    except (TypeError, ValueError):
+        clave = original
+    estilo = STROKE_MAP.get(clave)
+    if estilo is None and original:
+        estilo = _STROKE_CASEFOLD_MAP.get(original.casefold())
+    return estilo, original
+
+
+def _normalizar_sex(valor):
+    original = str(valor or "").strip().upper()
+    return SEX_MAP.get(original, original or "X")
+
+
+def _normalizar_course(valor):
+    original = str(valor or "S").strip().upper()
+    return COURSE_MAP.get(original, original)
 
 
 def leer_con_access_parser(ruta_mdb: str | Path, password=None):
@@ -136,21 +203,22 @@ def leer_evento_mdb(ruta_mdb: str | Path) -> dict:
         events = []
         for row in evento_rows:
             codigo_bruto = _valor(row, 3, "Event_stroke")
-            try:
-                codigo = int(codigo_bruto or 0)
-            except (TypeError, ValueError):
-                codigo = str(codigo_bruto or "?").strip().upper()
-            estilo = STROKE_MAP.get(codigo)
+            estilo, original = _normalizar_stroke(codigo_bruto)
             if estilo is None:
-                estilo = f"Estilo {codigo}"
-                avisos.append(f"El evento {_valor(row, 1, 'Event_no')} usa estilo desconocido {codigo}.")
+                estilo = original
+                aviso = (
+                    f"El evento {_valor(row, 1, 'Event_no')} usa estilo "
+                    f"desconocido {original!r}."
+                )
+                avisos.append(aviso)
+                logging.warning("MDB: %s", aviso)
             events.append({
                 "event_ptr": int(_valor(row, 0, "Event_ptr")),
                 "distance": int(_valor(row, 2, "Event_dist")),
                 "style": estilo,
                 "age_lo": int(_valor(row, 4, "Low_age") or 0),
                 "age_hi": int(_valor(row, 5, "High_Age") or 0),
-                "sex": SEX_MAP.get(str(_valor(row, 6, "Event_sex") or "X").strip().upper(), "X"),
+                "sex": _normalizar_sex(_valor(row, 6, "Event_sex")),
             })
         inicio = _iso(_valor(meet, 1, "Meet_start"))
         return {
@@ -159,7 +227,7 @@ def leer_evento_mdb(ruta_mdb: str | Path) -> dict:
                 "date_start": inicio,
                 "date_end": _iso(_valor(meet, 2, "Meet_end")) or inicio,
                 "venue": str(_valor(meet, 3, "Meet_location") or "").strip(),
-                "course": str(_valor(meet, 4, "Meet_course") or "S").strip().upper(),
+                "course": _normalizar_course(_valor(meet, 4, "Meet_course")),
                 "reference_date": inicio,
             },
             "teams": teams,
