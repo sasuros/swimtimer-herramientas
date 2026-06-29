@@ -2,7 +2,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.jet4 import JET4_XOR_MASK, recuperar_clave_jet4
+from core.jet4 import (
+    JET4_XOR_MASK,
+    TemporaryDecryptedConnection,
+    recuperar_clave_jet4,
+)
+
+
+class _FakeConnection:
+    def __init__(self):
+        self.committed = self.rolled_back = self.closed = False
+
+    def commit(self): self.committed = True
+    def rollback(self): self.rolled_back = True
+    def close(self): self.closed = True
 
 
 class Jet4Tests(unittest.TestCase):
@@ -21,7 +34,22 @@ class Jet4Tests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "demasiado pequeno"):
                 recuperar_clave_jet4(ruta)
 
+    def test_temporal_restaura_cabecera_y_reemplaza_original(self):
+        header = bytes(range(32))
+        with tempfile.TemporaryDirectory() as tmp:
+            original = Path(tmp) / "evento.mdb"
+            temporary = Path(tmp) / "temporal.mdb"
+            original.write_bytes(b"original")
+            temporary.write_bytes(bytearray(0x42) + bytearray(32) + b"datos")
+            inner = _FakeConnection()
+            connection = TemporaryDecryptedConnection(inner, original, temporary, header)
+            connection.commit()
+            contenido = original.read_bytes()
+            self.assertEqual(contenido[0x42:0x62], header)
+            self.assertTrue(inner.committed)
+            self.assertTrue(inner.closed)
+            self.assertFalse(temporary.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
-

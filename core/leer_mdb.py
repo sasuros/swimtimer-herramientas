@@ -1,8 +1,9 @@
 """Consultas de solo lectura sobre archivos Meet Manager."""
 
+import logging
 from pathlib import Path
 
-from core.jet4 import conectar_mdb
+from core.jet4 import conectar_mdb, recuperar_clave_jet4
 
 STROKE_MAP = {
     1: "Crawl", 2: "Espalda", 3: "Pecho", 4: "Mariposa",
@@ -12,6 +13,14 @@ SEX_MAP = {"G": "F", "F": "F", "B": "M", "M": "M", "X": "X"}
 
 
 def _valor(fila, indice, nombre):
+    if isinstance(fila, dict):
+        if nombre in fila:
+            return fila[nombre]
+        nombre_normalizado = nombre.casefold()
+        for clave, valor in fila.items():
+            if str(clave).casefold() == nombre_normalizado:
+                return valor
+        return None
     try:
         return getattr(fila, nombre)
     except (AttributeError, TypeError):
@@ -28,32 +37,90 @@ def _iso(valor):
     return str(valor).split(" ", 1)[0]
 
 
-def leer_evento_mdb(ruta_mdb: str | Path) -> dict:
-    """Lee Meet, Team y Event sin modificar el archivo."""
+def leer_con_access_parser(ruta_mdb: str | Path, password=None):
+    """Abre un MDB directamente, sin ODBC ni DAO."""
+    from access_parser import AccessParser
+
+    if password:
+        return AccessParser(str(ruta_mdb), password=password)
+    return AccessParser(str(ruta_mdb))
+
+
+def _filas_access_parser(database, tabla):
+    """Normaliza salidas columnares o listas de diccionarios a filas."""
+    datos = database.parse_table(tabla)
+    if isinstance(datos, list):
+        return datos
+    if isinstance(datos, dict):
+        columnas = list(datos)
+        cantidad = max((len(datos[columna]) for columna in columnas), default=0)
+        return [
+            {
+                columna: datos[columna][indice] if indice < len(datos[columna]) else None
+                for columna in columnas
+            }
+            for indice in range(cantidad)
+        ]
+    raise TypeError(f"Formato inesperado en la tabla {tabla}: {type(datos).__name__}")
+
+
+def _abrir_access_parser(ruta_mdb):
+    clave = recuperar_clave_jet4(ruta_mdb)
+    errores = []
+    for nombre, password in (("con password", clave), ("sin password", None)):
+        try:
+            database = leer_con_access_parser(ruta_mdb, password=password)
+            logging.info("MDB: lectura exitosa con access-parser %s", nombre)
+            return database
+        except Exception as exc:
+            errores.append(f"{nombre}: {exc}")
+            logging.warning("MDB: fallo access-parser %s: %s", nombre, exc)
+    raise RuntimeError("; ".join(errores))
+
+
+def _leer_evento_access_parser(ruta_mdb):
+    database = _abrir_access_parser(ruta_mdb)
+    meet_rows = _filas_access_parser(database, "Meet")
+    if not meet_rows:
+        raise RuntimeError("La tabla Meet no contiene informacion del evento.")
+    return meet_rows[0], _filas_access_parser(database, "Team"), _filas_access_parser(database, "Event")
+
+
+def _leer_evento_conexion(ruta_mdb):
     conexion = conectar_mdb(ruta_mdb, solo_lectura=True)
-    avisos = []
     try:
         cursor = conexion.cursor()
-        try:
-            meet = cursor.execute(
-                "SELECT Meet_name1, Meet_start, Meet_end, Meet_location, Meet_course FROM Meet"
-            ).fetchone()
-        except Exception as exc:
-            raise RuntimeError("El archivo no parece ser un MDB de Meet Manager.") from exc
-        if meet is None:
-            raise RuntimeError("La tabla Meet no contiene informacion del evento.")
-        equipo_rows = cursor.execute(
+        meet = cursor.execute(
+            "SELECT Meet_name1, Meet_start, Meet_end, Meet_location, Meet_course FROM Meet"
+        ).fetchone()
+        teams = cursor.execute(
             "SELECT Team_no, Team_name, Team_short, Team_abbr FROM Team WHERE Team_no > 0"
         ).fetchall()
+        events = cursor.execute(
+            "SELECT Event_ptr, Event_no, Event_dist, Event_stroke, Low_age, High_Age, Event_sex "
+            "FROM Event WHERE Event_dist > 0"
+        ).fetchall()
+        return meet, teams, events
+    finally:
+        conexion.close()
+
+
+def leer_evento_mdb(ruta_mdb: str | Path) -> dict:
+    """Lee Meet, Team y Event sin modificar el archivo."""
+    avisos = []
+    try:
         try:
-            evento_rows = cursor.execute(
-                "SELECT Event_ptr, Event_no, Event_dist, Event_stroke, Low_age, High_Age, Event_sex "
-                "FROM Event WHERE Event_dist > 0"
-            ).fetchall()
-        except Exception as exc:
-            raise RuntimeError(
-                "No se encontro la tabla Event. Verifica que el Meet tenga eventos configurados."
-            ) from exc
+            meet, equipo_rows, evento_rows = _leer_evento_access_parser(ruta_mdb)
+            equipo_rows = [row for row in equipo_rows if int(_valor(row, 0, "Team_no") or 0) > 0]
+            evento_rows = [row for row in evento_rows if float(_valor(row, 2, "Event_dist") or 0) > 0]
+        except Exception as raw_exc:
+            logging.warning("MDB: access-parser no pudo leer las tablas requeridas: %s", raw_exc)
+            try:
+                meet, equipo_rows, evento_rows = _leer_evento_conexion(ruta_mdb)
+            except Exception as exc:
+                raise RuntimeError("El archivo no parece ser un MDB de Meet Manager.") from exc
+        if meet is None:
+            raise RuntimeError("La tabla Meet no contiene informacion del evento.")
 
         teams = []
         for row in equipo_rows:
@@ -99,12 +166,29 @@ def leer_evento_mdb(ruta_mdb: str | Path) -> dict:
             "events": events,
             "warnings": avisos,
         }
-    finally:
-        conexion.close()
+    except KeyError as exc:
+        raise RuntimeError(f"Falta una columna requerida de Meet Manager: {exc}") from exc
 
 
 def leer_indices_mdb(ruta_mdb: str | Path) -> dict:
     """Obtiene IDs existentes para validar una importacion."""
+    try:
+        database = _abrir_access_parser(ruta_mdb)
+        teams = _filas_access_parser(database, "Team")
+        athletes = _filas_access_parser(database, "Athlete")
+        events = _filas_access_parser(database, "Event")
+        entries = _filas_access_parser(database, "Entry")
+        return {
+            "teams": {int(_valor(row, 0, "Team_no")) for row in teams},
+            "athletes": {int(_valor(row, 0, "Ath_no")) for row in athletes},
+            "events": {int(_valor(row, 0, "Event_ptr")) for row in events},
+            "entries": {
+                (int(_valor(row, 0, "Event_ptr")), int(_valor(row, 1, "Ath_no")))
+                for row in entries
+            },
+        }
+    except Exception as exc:
+        logging.warning("MDB: access-parser no pudo leer indices: %s", exc)
     conexion = conectar_mdb(ruta_mdb, solo_lectura=True)
     try:
         cursor = conexion.cursor()

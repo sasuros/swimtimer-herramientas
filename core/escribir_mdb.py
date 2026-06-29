@@ -5,7 +5,7 @@ import shutil
 from datetime import date, datetime
 from pathlib import Path
 
-from core.jet4 import conectar_mdb
+from core.jet4 import conectar_mdb, conectar_mdb_temporal_sin_clave
 
 ATHLETE_FIELDS = [
     "Ath_no", "Last_name", "First_name", "Initial", "Ath_Sex", "Birth_date",
@@ -75,7 +75,14 @@ def importar_consolidado(ruta_mdb: str | Path, datos: dict, progreso=None) -> di
     conexion = None
     conteos = {"teams": 0, "athletes": 0, "entries": 0, "skipped": 0}
     try:
-        conexion = conectar_mdb(ruta_mdb)
+        try:
+            conexion = conectar_mdb(ruta_mdb)
+        except Exception as direct_error:
+            logging.warning(
+                "IMPORTAR: conexiones directas fallaron; probando temporal: %s",
+                direct_error,
+            )
+            conexion = conectar_mdb_temporal_sin_clave(ruta_mdb)
         cursor = conexion.cursor()
         iniciales = {
             tabla: int(cursor.execute(f"SELECT COUNT(*) FROM [{tabla}]").fetchone()[0])

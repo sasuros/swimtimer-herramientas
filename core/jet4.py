@@ -1,7 +1,10 @@
 """Acceso seguro a archivos Microsoft Jet 4 de Meet Manager."""
 
 import logging
+import os
+import shutil
 import struct
+import tempfile
 from pathlib import Path
 
 ACCESS_ENGINE_URL = "https://www.microsoft.com/en-us/download/details.aspx?id=54920"
@@ -109,6 +112,51 @@ class DAOConnection:
                 self._pythoncom = None
 
 
+class TemporaryDecryptedConnection:
+    """Publica un MDB temporal solo despues de commit exitoso."""
+
+    def __init__(self, connection, original_path, temporary_path, encrypted_header):
+        self._connection = connection
+        self._original_path = Path(original_path)
+        self._temporary_path = Path(temporary_path)
+        self._encrypted_header = encrypted_header
+        self._finished = False
+        self._connection_closed = False
+
+    def cursor(self):
+        return self._connection.cursor()
+
+    def commit(self):
+        self._connection.commit()
+        self._connection.close()
+        self._connection_closed = True
+        with self._temporary_path.open("r+b") as archivo:
+            archivo.seek(0x42)
+            archivo.write(self._encrypted_header)
+            archivo.flush()
+            os.fsync(archivo.fileno())
+        os.replace(self._temporary_path, self._original_path)
+        self._finished = True
+        logging.info("MDB: temporal confirmado y encriptacion restaurada")
+
+    def rollback(self):
+        if self._finished:
+            return
+        try:
+            if not self._connection_closed:
+                self._connection.rollback()
+        finally:
+            if not self._connection_closed:
+                self._connection.close()
+                self._connection_closed = True
+            self._temporary_path.unlink(missing_ok=True)
+            self._finished = True
+
+    def close(self):
+        if not self._finished:
+            self.rollback()
+
+
 def recuperar_clave_jet4(ruta_mdb: str | Path) -> str:
     """Recupera la clave almacenada en los bytes 0x42-0x61 del MDB."""
     ruta = Path(ruta_mdb)
@@ -210,3 +258,50 @@ def conectar_mdb(ruta_mdb: str | Path, solo_lectura: bool = False):
         "Verifica que Microsoft Access Database Engine y pywin32 esten instalados.\n"
         f"Access Engine: {ACCESS_ENGINE_URL}\n\n" + "\n".join(errores)
     )
+
+
+def conectar_mdb_temporal_sin_clave(ruta_mdb: str | Path):
+    """Ultimo recurso de escritura: trabaja en una copia con clave de cabecera vacia."""
+    try:
+        import pyodbc
+    except ImportError as exc:
+        raise RuntimeError("La estrategia temporal requiere pyodbc.") from exc
+
+    original = Path(ruta_mdb).resolve()
+    with original.open("rb") as archivo:
+        archivo.seek(0x42)
+        encrypted_header = archivo.read(len(JET4_XOR_MASK))
+    if len(encrypted_header) != len(JET4_XOR_MASK):
+        raise RuntimeError("No se pudo leer la cabecera de seguridad del MDB.")
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{original.stem}_swimtimer_", suffix=original.suffix, dir=original.parent
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    connection = None
+    try:
+        shutil.copy2(original, temporary)
+        with temporary.open("r+b") as archivo:
+            archivo.seek(0x42)
+            archivo.write(JET4_XOR_MASK)
+            archivo.flush()
+            os.fsync(archivo.fileno())
+
+        driver = "Microsoft Access Driver (*.mdb, *.accdb)"
+        if driver not in set(pyodbc.drivers()):
+            raise RuntimeError("No esta instalado el driver Microsoft Access.")
+        connection = pyodbc.connect(
+            f"DRIVER={{{driver}}};DBQ={temporary};",
+            autocommit=False,
+            timeout=10,
+        )
+        logging.info("MDB: conexion de escritura con temporal sin clave")
+        return TemporaryDecryptedConnection(
+            connection, original, temporary, encrypted_header
+        )
+    except Exception:
+        if connection is not None:
+            connection.close()
+        temporary.unlink(missing_ok=True)
+        raise
