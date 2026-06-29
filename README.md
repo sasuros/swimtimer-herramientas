@@ -14,12 +14,14 @@ Aplicacion de escritorio para conectar Hy-Tek Meet Manager con SWIMTIMER Inscrip
   Descarga oficial: https://www.microsoft.com/en-us/download/details.aspx?id=54920
 - `pywin32`, que habilita la conexion DAO compatible con archivos Jet 4 protegidos.
 - `access-parser`, usado para leer directamente archivos Jet 3/Access 97 sin ODBC.
+- `tkinterdnd2`, usado para arrastrar archivos desde el Explorador de Windows.
 
 Instalacion individual, si fuera necesaria:
 
 ```powershell
 pip install pywin32
 pip install access-parser
+pip install tkinterdnd2
 ```
 
 ## Desarrollo

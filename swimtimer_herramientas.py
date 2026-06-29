@@ -11,6 +11,11 @@ from tkinter import messagebox
 
 from gui.app import SwimtimerApp
 
+try:
+    from tkinterdnd2 import TkinterDnD
+except ImportError:
+    TkinterDnD = None
+
 
 def carpeta_aplicacion():
     if getattr(sys, "frozen", False):
@@ -32,7 +37,9 @@ def main():
     multiprocessing.freeze_support()
     configurar_log()
     try:
-        root = tk.Tk()
+        root = TkinterDnD.Tk() if TkinterDnD else tk.Tk()
+        if TkinterDnD is None:
+            logging.warning("tkinterdnd2 no está disponible; se usará selección por click")
         SwimtimerApp(root)
         root.mainloop()
         return 0
@@ -49,4 +56,3 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

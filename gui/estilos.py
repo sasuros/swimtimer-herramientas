@@ -1,16 +1,23 @@
-"""Paleta visual y utilidades compartidas de tkinter."""
+"""Sistema visual SWIMTIMER para tkinter."""
 
 import sys
+import tkinter as tk
 from pathlib import Path
 
-NAVY = "#0a1628"
-CARD = "#0f1f3a"
-CREAM = "#E8E6DF"
-MUTED = "#9f9e99"
-GOLD = "#c9a84c"
-TEAL = "#0F6E56"
-RED = "#ef4444"
-GREEN = "#22c55e"
+WHITE = "#FFFFFF"
+CARD = "#F8F9FA"
+HEADER = "#1B3A5C"
+TITLE = "#2C3E50"
+TEXT = "#374151"
+HELP = "#059669"
+PRIMARY = "#047857"
+PRIMARY_HOVER = "#065F46"
+SECONDARY = "#F3F4F6"
+BORDER = "#D1D5DB"
+SUCCESS = "#16A34A"
+WARNING = "#D97706"
+ERROR = "#DC2626"
+MUTED = "#9CA3AF"
 
 
 def ruta_recurso(nombre: str) -> Path:
@@ -18,9 +25,44 @@ def ruta_recurso(nombre: str) -> Path:
     return base / "recursos" / nombre
 
 
-def centrar(ventana, ancho=700, alto=500):
+def centrar(ventana, ancho=780, alto=700):
     ventana.update_idletasks()
     x = max(0, (ventana.winfo_screenwidth() - ancho) // 2)
     y = max(0, (ventana.winfo_screenheight() - alto) // 2)
     ventana.geometry(f"{ancho}x{alto}+{x}+{y}")
 
+
+def boton_primario(parent, texto, comando, **kwargs):
+    return tk.Button(
+        parent, text=texto, command=comando, bg=PRIMARY, fg=WHITE,
+        activebackground=PRIMARY_HOVER, activeforeground=WHITE,
+        disabledforeground=WHITE, relief="flat", cursor="hand2",
+        font=("Segoe UI", 13, "bold"), padx=20, pady=12, **kwargs,
+    )
+
+
+def boton_secundario(parent, texto, comando, **kwargs):
+    return tk.Button(
+        parent, text=texto, command=comando, bg=SECONDARY, fg=TEXT,
+        activebackground="#E5E7EB", activeforeground=TEXT,
+        highlightbackground=BORDER, highlightthickness=1,
+        relief="flat", cursor="hand2", font=("Segoe UI", 10, "bold"),
+        padx=14, pady=8, **kwargs,
+    )
+
+
+def crear_seccion(parent, numero, titulo):
+    frame = tk.LabelFrame(
+        parent, text=f"  {numero}. {titulo}  ", bg=WHITE, fg=TITLE,
+        font=("Segoe UI", 11, "bold"), bd=1, relief="solid",
+        highlightbackground=BORDER, padx=16, pady=12,
+    )
+    frame.pack(fill="x", padx=28, pady=(0, 12))
+    return frame
+
+
+def ayuda(parent, texto):
+    return tk.Label(
+        parent, text=texto, bg=WHITE, fg=HELP, justify="left",
+        anchor="w", font=("Segoe UI", 9), wraplength=680,
+    )

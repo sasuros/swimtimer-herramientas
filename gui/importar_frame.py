@@ -4,129 +4,135 @@ import logging
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from core.escribir_mdb import importar_consolidado
 from core.leer_consolidado import leer_consolidado
 from core.leer_mdb import leer_indices_mdb
 from core.validaciones import validar_importacion
-from gui.estilos import CARD, CREAM, MUTED, NAVY, TEAL
+from gui.drop_zone import DropZone
+from gui.estilos import CARD, ERROR, HELP, MUTED, SUCCESS, TEXT, TITLE, WARNING, WHITE, ayuda, boton_primario, boton_secundario, crear_seccion
 
 
 class ImportarFrame(tk.Frame):
     def __init__(self, master, volver):
-        super().__init__(master, bg=NAVY)
-        self.datos = self.indices = None
-        tk.Button(self, text="< Volver", command=volver, bg=NAVY, fg=CREAM, relief="flat",
-                  font=("Segoe UI", 11)).pack(anchor="w", padx=24, pady=(16, 4))
-        tk.Label(self, text="Importar inscripciones", bg=NAVY, fg=CREAM,
-                 font=("Segoe UI", 22, "bold")).pack()
-        tk.Label(self, text="Primero el JSON de la web; despues el .mdb de Meet Manager",
-                 bg=NAVY, fg=MUTED, font=("Segoe UI", 11)).pack(pady=(4, 16))
-        tk.Button(self, text="SELECCIONAR JSON Y MDB", command=self.elegir,
-                  bg=TEAL, fg="white", relief="flat", padx=25, pady=12,
-                  font=("Segoe UI", 12, "bold")).pack()
-        self.resumen = tk.Label(self, text="", bg=CARD, fg=CREAM, justify="left",
-                                width=67, height=10, font=("Segoe UI", 10), padx=16)
-        self.resumen.pack(padx=30, pady=16)
-        acciones = tk.Frame(self, bg=NAVY); acciones.pack()
-        self.detalle_btn = tk.Button(acciones, text="Ver detalle", command=self.detalle,
-                                     state="disabled", bg=CARD, fg=CREAM, relief="flat", padx=18, pady=9)
-        self.detalle_btn.pack(side="left", padx=5)
-        self.importar_btn = tk.Button(acciones, text="IMPORTAR", command=self.importar,
-                                      state="disabled", bg=TEAL, fg="white", relief="flat",
-                                      padx=25, pady=9, font=("Segoe UI", 11, "bold"))
-        self.importar_btn.pack(side="left", padx=5)
-        self.barra = ttk.Progressbar(self, mode="indeterminate", length=430)
-        self.estado = tk.Label(self, text="", bg=NAVY, fg=MUTED)
+        super().__init__(master, bg=WHITE)
+        self.json_path = self.mdb_path = self.datos = self.indices = None
+        top = tk.Frame(self, bg=WHITE); top.pack(fill="x", padx=28, pady=(12, 4))
+        boton_secundario(top, "← Volver", volver).pack(side="left")
+        tk.Label(self, text="IMPORTAR INSCRIPCIONES", bg=WHITE, fg=TITLE,
+                 font=("Segoe UI", 22, "bold")).pack(anchor="w", padx=28, pady=(2, 8))
 
-    def elegir(self):
-        json_path = filedialog.askopenfilename(parent=self, title="Selecciona las inscripciones JSON",
-                                               filetypes=[("JSON", "*.json")])
-        if not json_path: return
-        mdb_path = filedialog.askopenfilename(parent=self, title="Selecciona el MDB donde importar",
-                                              filetypes=[("Meet Manager", "*.mdb")])
-        if not mdb_path: return
-        self.json_path, self.mdb_path = Path(json_path), Path(mdb_path)
-        self._ocupado("Validando archivos...")
-        threading.Thread(target=self._validar, daemon=True).start()
+        section1 = crear_seccion(self, 1, "Archivo de inscripciones")
+        self.json_drop = DropZone(section1, [("Archivos JSON", "*.json")], {".json"},
+                                  self.seleccionar_json, "El consolidado descargado desde la web")
+        self.json_drop.pack(fill="x")
 
-    def _ocupado(self, texto):
-        self.importar_btn.config(state="disabled"); self.detalle_btn.config(state="disabled")
-        self.estado.config(text=texto); self.estado.pack(pady=(8, 0))
-        self.barra.pack(pady=(8, 0)); self.barra.start(12)
+        section2 = crear_seccion(self, 2, "Base de datos de Meet Manager")
+        self.mdb_drop = DropZone(section2, [("Archivos MDB", "*.mdb")], {".mdb"},
+                                 self.seleccionar_mdb, "El archivo .mdb donde se importarán los nadadores")
+        self.mdb_drop.pack(fill="x")
 
-    def _libre(self):
-        self.barra.stop(); self.barra.pack_forget(); self.estado.pack_forget()
+        self.section3 = crear_seccion(self, 3, "Resumen")
+        self.summary = tk.Label(self.section3, text="Selecciona los dos archivos para validar la importación.",
+                                bg=WHITE, fg=MUTED, justify="left", anchor="w", font=("Segoe UI", 10))
+        self.summary.pack(fill="x")
+        self.detail_button = boton_secundario(self.section3, "Ver detalle", self.detalle, state="disabled")
+        self.detail_button.pack(anchor="w", pady=(8, 4))
+        ayuda(self.section3, "Antes de escribir se creará automáticamente una copia de seguridad del archivo .mdb").pack(fill="x", pady=(4, 8))
+        self.import_button = boton_primario(self.section3, "►  IMPORTAR AL MEET MANAGER", self.importar, state="disabled")
+        self.import_button.pack(fill="x")
+        self.progress = ttk.Progressbar(self, mode="indeterminate", length=500)
+        self.status = tk.Label(self, text="", bg=WHITE, fg=HELP, font=("Segoe UI", 9))
 
-    def _validar(self):
+    def seleccionar_json(self, path):
+        self.json_path = Path(path); self._ready()
+
+    def seleccionar_mdb(self, path):
+        self.mdb_path = Path(path); self._ready()
+
+    def _ready(self):
+        if self.json_path and self.mdb_path:
+            self._busy("Validando archivos…")
+            threading.Thread(target=self._validate, daemon=True).start()
+
+    def _busy(self, text):
+        self.import_button.config(state="disabled"); self.detail_button.config(state="disabled")
+        self.status.config(text=text); self.status.pack(pady=(2, 0))
+        self.progress.pack(pady=(4, 0)); self.progress.start(12)
+
+    def _free(self):
+        self.progress.stop(); self.progress.pack_forget(); self.status.pack_forget()
+
+    def _validate(self):
         try:
-            datos = leer_consolidado(self.json_path)
+            data = leer_consolidado(self.json_path)
             indices = leer_indices_mdb(self.mdb_path)
-            resultado = validar_importacion(datos, indices)
-            self.after(0, self._mostrar, datos, indices, resultado)
+            result = validar_importacion(data, indices)
+            self.after(0, self._show, data, indices, result)
         except Exception as exc:
             self.after(0, self._error, str(exc))
 
-    def _mostrar(self, datos, indices, resultado):
-        self._libre(); self.datos, self.indices, self.validacion = datos, indices, resultado
-        meta = datos.get("meta", {})
-        tardios = sum(1 for atleta in datos["athletes"] if atleta.get("late"))
-        tipo = "SUPLEMENTO DE TARDIAS" if meta.get("type") == "supplement" else "Consolidado completo"
-        sha = "verificado" if datos["_validation"]["sha256_verified"] else "no requerido (v1)"
-        texto = (f"RESUMEN DE IMPORTACION\n{self.json_path.name}\nMDB: {self.mdb_path.name}\n\n"
-                 f"Tipo: {tipo}\n{len(datos.get('teams', []))} clubes | "
-                 f"{len(datos['athletes'])} nadadores | {len(datos['results'])} inscripciones\n"
-                 f"SHA-256: {sha} | Tardios: {tardios}\n"
-                 f"Errores: {len(resultado['errors'])} | Avisos: {len(resultado['warnings'])}")
-        self.resumen.config(text=texto)
-        self.detalle_btn.config(state="normal")
-        if resultado["ok"]:
-            self.importar_btn.config(state="normal")
+    def _show(self, data, indices, result):
+        self._free(); self.datos, self.indices, self.validacion = data, indices, result
+        late = sum(1 for athlete in data["athletes"] if athlete.get("late"))
+        sha = "✓ SHA-256 verificado" if data["_validation"]["sha256_verified"] else "SHA-256 no requerido (v1)"
+        text = (f"✓  {len(data.get('teams', []))} equipos     ✓  {len(data['athletes'])} nadadores     "
+                f"✓  {len(data['results'])} inscripciones\n\n{sha}")
+        if late:
+            text += f"\n⚠  {late} nadadores marcados como tardíos"
+        if result["warnings"]:
+            text += f"\n{len(result['warnings'])} avisos para revisar"
+        self.summary.config(text=text, fg=SUCCESS if result["ok"] else ERROR,
+                            font=("Segoe UI", 10, "bold"))
+        self.detail_button.config(state="normal")
+        if result["ok"]:
+            self.import_button.config(state="normal")
         else:
-            messagebox.showerror("No se puede importar", "\n".join(resultado["errors"][:12]), parent=self)
+            messagebox.showerror("No se puede importar", "\n".join(result["errors"][:12]), parent=self)
 
     def detalle(self):
-        ventana = tk.Toplevel(self); ventana.title("Detalle de inscripciones"); ventana.geometry("650x430")
-        texto = tk.Text(ventana, wrap="word", font=("Segoe UI", 10)); texto.pack(fill="both", expand=True)
-        equipos = {int(t["Team_no"]): t.get("Team_name", str(t["Team_no"])) for t in self.datos.get("teams", [])}
-        grupos = {}
-        for atleta in self.datos["athletes"]:
-            grupos.setdefault(int(atleta["Team_no"]), []).append(atleta)
-        for team_no, atletas in grupos.items():
-            texto.insert("end", f"\n{equipos.get(team_no, 'Equipo ' + str(team_no))} ({len(atletas)})\n")
-            for a in atletas:
-                marca = " [TARDIO]" if a.get("late") else ""
-                texto.insert("end", f"  {a.get('Last_name','')}, {a.get('First_name','')}{marca}\n")
+        window = tk.Toplevel(self); window.title("Detalle de inscripciones"); window.geometry("650x430")
+        text = tk.Text(window, wrap="word", font=("Segoe UI", 10), bg=WHITE, fg=TEXT)
+        text.pack(fill="both", expand=True)
+        teams = {int(t["Team_no"]): t.get("Team_name", str(t["Team_no"])) for t in self.datos.get("teams", [])}
+        groups = {}
+        for athlete in self.datos["athletes"]:
+            groups.setdefault(int(athlete["Team_no"]), []).append(athlete)
+        for team_no, athletes in groups.items():
+            text.insert("end", f"\n{teams.get(team_no, 'Equipo ' + str(team_no))} ({len(athletes)})\n")
+            for athlete in athletes:
+                mark = " [TARDÍO]" if athlete.get("late") else ""
+                text.insert("end", f"  {athlete.get('Last_name','')}, {athlete.get('First_name','')}{mark}\n")
         if self.validacion["warnings"]:
-            texto.insert("end", "\nAVISOS\n" + "\n".join(self.validacion["warnings"]))
-        texto.config(state="disabled")
+            text.insert("end", "\nAVISOS\n" + "\n".join(self.validacion["warnings"]))
+        text.config(state="disabled")
 
     def importar(self):
-        if not messagebox.askyesno("Confirmar importacion",
-                                   "Se creara un backup automatico antes de escribir.\n\nContinuar?", parent=self):
+        if not messagebox.askyesno("Confirmar importación",
+                                   "Se creará una copia de seguridad automática antes de escribir.\n\n¿Continuar?", parent=self):
             return
-        self._ocupado("Creando backup e importando...")
-        threading.Thread(target=self._importar_worker, daemon=True).start()
+        self._busy("Creando backup e importando…")
+        threading.Thread(target=self._import_worker, daemon=True).start()
 
-    def _progreso(self, actual, total, texto):
-        self.after(0, self.estado.config, {"text": f"{texto}: {actual}/{total}"})
+    def _progress(self, current, total, text):
+        self.after(0, self.status.config, {"text": f"{text}: {current}/{total}"})
 
-    def _importar_worker(self):
+    def _import_worker(self):
         try:
-            resultado = importar_consolidado(self.mdb_path, self.datos, self._progreso)
-            self.after(0, self._terminado, resultado)
+            result = importar_consolidado(self.mdb_path, self.datos, self._progress)
+            self.after(0, self._done, result)
         except Exception as exc:
             self.after(0, self._error, str(exc))
 
-    def _terminado(self, r):
-        self._libre()
-        messagebox.showinfo("Importacion completada",
-            f"Equipos insertados: {r['teams']}\nNadadores: {r['athletes']}\n"
-            f"Inscripciones: {r['entries']}\nOmitidos: {r['skipped']}\n\nBackup:\n{r['backup']}\n\n"
-            "Abre Meet Manager para verificar.", parent=self)
+    def _done(self, result):
+        self._free()
+        messagebox.showinfo("Importación completada",
+            f"Equipos insertados: {result['teams']}\nNadadores: {result['athletes']}\n"
+            f"Inscripciones: {result['entries']}\nOmitidos: {result['skipped']}\n\n"
+            f"Copia de seguridad:\n{result['backup']}\n\nAbre Meet Manager para verificar.", parent=self)
 
-    def _error(self, detalle):
-        self._libre(); logging.exception("Operacion de importacion fallida")
-        messagebox.showerror("No se pudo completar", detalle, parent=self)
-
+    def _error(self, detail):
+        self._free(); self.summary.config(text="No se pudo completar la operación.", fg=ERROR)
+        logging.error("Operación de importación fallida: %s", detail)
+        messagebox.showerror("No se pudo completar", detail, parent=self)
