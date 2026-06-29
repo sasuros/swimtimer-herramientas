@@ -9,6 +9,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 
+from core.verificar_sistema import formatear_resultados, verificar_sistema
 from gui.app import SwimtimerApp
 
 try:
@@ -33,9 +34,38 @@ def configurar_log():
     )
 
 
+def preparar_consola_verificacion():
+    """Conecta stdout al CMD padre cuando el ejecutable fue creado con --windowed."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            if getattr(sys, "frozen", False):
+                if not ctypes.windll.kernel32.AttachConsole(-1):
+                    ctypes.windll.kernel32.AllocConsole()
+                sys.stdout = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+                sys.stderr = open("CONOUT$", "w", encoding="utf-8", buffering=1)
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (OSError, AttributeError):
+        pass
+
+
+def ejecutar_verificacion_cli():
+    preparar_consola_verificacion()
+    resultados, puede_exportar, puede_importar = verificar_sistema()
+    print("VERIFICACION DEL SISTEMA\n")
+    print(formatear_resultados(resultados, puede_exportar, puede_importar))
+    return 0
+
+
 def main():
     multiprocessing.freeze_support()
     configurar_log()
+    if "--verificar" in sys.argv:
+        return ejecutar_verificacion_cli()
     try:
         root = TkinterDnD.Tk() if TkinterDnD else tk.Tk()
         if TkinterDnD is None:

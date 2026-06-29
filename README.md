@@ -47,8 +47,25 @@ Desde el explorador, haz doble click en `build\build_exe.bat`, o ejecuta:
 .\build\build_exe.bat
 ```
 
-El resultado queda en `dist\SWIMTIMER Herramientas.exe`. El ejecutable es portable,
-pero el equipo destino necesita el controlador de Access para abrir archivos `.mdb`.
+El resultado queda en `dist\SWIMTIMER Herramientas.exe`. El ejecutable es portable.
+Exportar no necesita controladores; Importar requiere el controlador de Access.
+
+Para generar una carpeta lista para copiar a una memoria USB, ejecuta:
+
+```powershell
+.\build\empaquetar_usb.bat
+```
+
+La carpeta `USB_SWIMTIMER_HERRAMIENTAS` contiene el ejecutable, una guia de uso y
+`VERIFICAR.bat`. Tambien puedes comprobar los requisitos desde una terminal con:
+
+```powershell
+python .\swimtimer_herramientas.py --verificar
+```
+
+La ventana principal verifica el equipo en silencio al iniciar. Si no encuentra el
+driver de Access, muestra un aviso con el enlace oficial de descarga; Exportar sigue
+disponible porque utiliza `access-parser` directamente.
 
 Para exportar, la aplicacion intenta primero `access-parser` y cae a ODBC/DAO si una
 tabla no puede analizarse. Para importar prueba ODBC y DAO directos; como ultimo

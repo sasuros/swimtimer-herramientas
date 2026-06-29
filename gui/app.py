@@ -1,8 +1,11 @@
 """Ventana principal de SWIMTIMER Herramientas."""
 
 import tkinter as tk
+import webbrowser
 
-from gui.estilos import BORDER, CARD, HEADER, MUTED, PRIMARY, TEXT, TITLE, WHITE, centrar, ruta_recurso
+from core.verificar_sistema import URL_DRIVER_ACCESS, formatear_resultados, verificar_sistema
+from gui.estilos import (BORDER, CARD, HEADER, MUTED, PRIMARY, TEXT, TITLE,
+                         WARNING, WHITE, boton_secundario, centrar, ruta_recurso)
 from gui.exportar_frame import ExportarFrame
 from gui.importar_frame import ImportarFrame
 
@@ -19,6 +22,7 @@ class SwimtimerApp:
         self.contenedor = tk.Frame(root, bg=WHITE)
         self.contenedor.pack(fill="both", expand=True)
         self.mostrar_menu()
+        root.after(100, self._verificar_al_iniciar)
 
     def _header(self):
         header = tk.Frame(self.root, bg=HEADER, height=88, padx=22, pady=12)
@@ -52,8 +56,73 @@ class SwimtimerApp:
                    lambda: self.mostrar(ExportarFrame)).pack(side="left", padx=12)
         self._card(cards, "↓  IMPORTAR\nINSCRIPCIONES", "Lee el JSON de la web y escribe\nlos nadadores en tu .mdb",
                    lambda: self.mostrar(ImportarFrame)).pack(side="left", padx=12)
+        boton_secundario(
+            body, "🔍  Verificar sistema", self.mostrar_verificacion
+        ).pack(pady=(22, 0))
+        self.aviso_driver = tk.Frame(
+            body, bg="#FFFBEB", highlightbackground="#FCD34D",
+            highlightthickness=1, padx=12, pady=8,
+        )
         tk.Label(self.contenedor, text="SWIMTIMER · Herramientas by Scanleads · v1.0",
                  bg=WHITE, fg=MUTED, font=("Segoe UI", 9)).pack(side="bottom", pady=16)
+
+    def _verificar_al_iniciar(self):
+        _, _, puede_importar = verificar_sistema()
+        if not puede_importar:
+            self._mostrar_aviso_driver()
+
+    def _mostrar_aviso_driver(self):
+        if not self.aviso_driver.winfo_exists():
+            return
+        tk.Label(
+            self.aviso_driver,
+            text="⚠️  Driver de Access no encontrado. Exportar funciona, pero Importar requiere el driver.",
+            bg="#FFFBEB", fg=WARNING, font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=(0, 10))
+        tk.Button(
+            self.aviso_driver, text="Instalar driver", command=self.abrir_descarga_driver,
+            bg="#FFFBEB", fg=TITLE, relief="flat", cursor="hand2",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="right")
+        self.aviso_driver.pack(pady=(14, 0))
+
+    @staticmethod
+    def abrir_descarga_driver():
+        webbrowser.open(URL_DRIVER_ACCESS)
+
+    def mostrar_verificacion(self):
+        resultados, puede_exportar, puede_importar = verificar_sistema()
+        ventana = tk.Toplevel(self.root)
+        ventana.title("Verificacion del sistema")
+        ventana.configure(bg=WHITE)
+        ventana.resizable(False, False)
+        ventana.transient(self.root)
+        ventana.grab_set()
+
+        tk.Label(
+            ventana, text="VERIFICACION DEL SISTEMA", bg=HEADER, fg=WHITE,
+            font=("Segoe UI", 16, "bold"), padx=24, pady=16,
+        ).pack(fill="x")
+        seccion = tk.Frame(
+            ventana, bg=WHITE, highlightbackground=BORDER, highlightthickness=1,
+            padx=20, pady=16,
+        )
+        seccion.pack(fill="both", padx=20, pady=20)
+        tk.Label(
+            seccion,
+            text=formatear_resultados(resultados, puede_exportar, puede_importar),
+            bg=WHITE, fg=TEXT, justify="left", anchor="w",
+            font=("Segoe UI", 10), wraplength=620,
+        ).pack(fill="x")
+
+        acciones = tk.Frame(ventana, bg=WHITE)
+        acciones.pack(fill="x", padx=20, pady=(0, 20))
+        boton_secundario(acciones, "Cerrar", ventana.destroy).pack(side="right")
+        if not puede_importar:
+            boton_secundario(
+                acciones, "Abrir enlace de descarga del driver", self.abrir_descarga_driver
+            ).pack(side="right", padx=(0, 10))
+        centrar(ventana, 700, 610)
 
     def _card(self, parent, title, description, command):
         frame = tk.Frame(parent, bg=CARD, width=315, height=225,
