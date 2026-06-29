@@ -15,9 +15,10 @@ class SwimtimerApp:
         self.root = root
         root.title("SWIMTIMER · Herramientas")
         root.configure(bg=WHITE)
-        root.minsize(780, 700)
-        root.resizable(False, False)
-        centrar(root)
+        root.minsize(780, 650)
+        root.resizable(True, True)
+        alto = min(820, max(650, root.winfo_screenheight() - 100))
+        centrar(root, 820, alto)
         self._header()
         self.contenedor = tk.Frame(root, bg=WHITE)
         self.contenedor.pack(fill="both", expand=True)
@@ -139,4 +140,27 @@ class SwimtimerApp:
 
     def mostrar(self, clase):
         self.limpiar()
-        clase(self.contenedor, self.mostrar_menu).pack(fill="both", expand=True)
+        viewport = tk.Frame(self.contenedor, bg=WHITE)
+        viewport.pack(fill="both", expand=True)
+        canvas = tk.Canvas(viewport, bg=WHITE, highlightthickness=0)
+        scrollbar = tk.Scrollbar(viewport, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        pagina = clase(canvas, self.mostrar_menu)
+        self.pagina_activa = pagina
+        window_id = canvas.create_window((0, 0), window=pagina, anchor="nw")
+
+        def ajustar_contenido(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def ajustar_ancho(event):
+            canvas.itemconfigure(window_id, width=event.width)
+
+        pagina.bind("<Configure>", ajustar_contenido)
+        canvas.bind("<Configure>", ajustar_ancho)
+        canvas.bind(
+            "<MouseWheel>",
+            lambda event: canvas.yview_scroll(-1 if event.delta > 0 else 1, "units"),
+        )

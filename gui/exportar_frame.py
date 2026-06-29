@@ -12,7 +12,8 @@ from core.leer_mdb import leer_evento_mdb
 from gui.drop_zone import DropZone
 from gui.estilos import (
     BORDER, CARD, ERROR, HELP, MUTED, SUCCESS, TEXT, TITLE, WHITE,
-    ayuda, boton_primario, boton_secundario, crear_seccion,
+    ayuda, boton_primario, boton_secundario, configurar_boton_primario,
+    crear_seccion,
 )
 
 COURSE_LABELS = {"S": "Piscina corta (25m)", "L": "Piscina larga (50m)", "Y": "Piscina en yardas"}
@@ -68,7 +69,7 @@ class ExportarFrame(tk.Frame):
 
     def seleccionar(self, path):
         self.ruta_mdb = Path(path)
-        self.exportar.config(state="disabled")
+        configurar_boton_primario(self.exportar, False)
         self.event_title.config(text="Leyendo el evento…", fg=MUTED)
         self.barra.pack(pady=5); self.barra.start(12)
         logging.info("EXPORTAR: Abriendo %s", path)
@@ -90,7 +91,7 @@ class ExportarFrame(tk.Frame):
         filename = nombre_config_sugerido(meet["name"])
         self.output_path = self.ruta_mdb.with_name(filename)
         self.output_var.set(str(self.output_path))
-        self.exportar.config(state="normal")
+        configurar_boton_primario(self.exportar, True)
         logging.info("EXPORTAR: %s equipos, %s pruebas", len(datos["teams"]), len(datos["events"]))
 
     def _error(self, detail):

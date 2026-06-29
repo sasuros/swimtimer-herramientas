@@ -33,11 +33,21 @@ def centrar(ventana, ancho=780, alto=700):
 
 
 def boton_primario(parent, texto, comando, **kwargs):
+    deshabilitado = kwargs.get("state") == "disabled"
     return tk.Button(
-        parent, text=texto, command=comando, bg=PRIMARY, fg=WHITE,
+        parent, text=texto, command=comando,
+        bg=MUTED if deshabilitado else PRIMARY, fg=WHITE,
         activebackground=PRIMARY_HOVER, activeforeground=WHITE,
         disabledforeground=WHITE, relief="flat", cursor="hand2",
-        font=("Segoe UI", 13, "bold"), padx=20, pady=12, **kwargs,
+        font=("Segoe UI", 13, "bold"), padx=20, pady=14, **kwargs,
+    )
+
+
+def configurar_boton_primario(boton, habilitado):
+    """Actualiza juntos el estado y color del CTA principal."""
+    boton.config(
+        state="normal" if habilitado else "disabled",
+        bg=PRIMARY if habilitado else MUTED,
     )
 
 

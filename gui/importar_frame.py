@@ -11,7 +11,10 @@ from core.leer_consolidado import leer_consolidado
 from core.leer_mdb import leer_indices_mdb
 from core.validaciones import validar_importacion
 from gui.drop_zone import DropZone
-from gui.estilos import CARD, ERROR, HELP, MUTED, SUCCESS, TEXT, TITLE, WARNING, WHITE, ayuda, boton_primario, boton_secundario, crear_seccion
+from gui.estilos import (CARD, ERROR, HELP, MUTED, SUCCESS, TEXT, TITLE,
+                         WARNING, WHITE, ayuda, boton_primario,
+                         boton_secundario, configurar_boton_primario,
+                         crear_seccion)
 
 
 class ImportarFrame(tk.Frame):
@@ -57,7 +60,8 @@ class ImportarFrame(tk.Frame):
             threading.Thread(target=self._validate, daemon=True).start()
 
     def _busy(self, text):
-        self.import_button.config(state="disabled"); self.detail_button.config(state="disabled")
+        configurar_boton_primario(self.import_button, False)
+        self.detail_button.config(state="disabled")
         self.status.config(text=text); self.status.pack(pady=(2, 0))
         self.progress.pack(pady=(4, 0)); self.progress.start(12)
 
@@ -87,7 +91,7 @@ class ImportarFrame(tk.Frame):
                             font=("Segoe UI", 10, "bold"))
         self.detail_button.config(state="normal")
         if result["ok"]:
-            self.import_button.config(state="normal")
+            configurar_boton_primario(self.import_button, True)
         else:
             messagebox.showerror("No se puede importar", "\n".join(result["errors"][:12]), parent=self)
 
