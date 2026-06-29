@@ -1,5 +1,6 @@
 """Acceso seguro a archivos Microsoft Jet 4 de Meet Manager."""
 
+import logging
 import struct
 from pathlib import Path
 
@@ -15,6 +16,97 @@ JET4_XOR_WORDS = (
     0x0568, 0x367B, 0xE3C9, 0xB1DF, 0x654B, 0x4313, 0x3EF3, 0x33B1,
     0xF008, 0x5B79, 0x24AE, 0x2A7C,
 )
+DAO_DB_FAIL_ON_ERROR = 128
+
+
+class DAOCursor:
+    """Cursor minimo sobre DAO compatible con el uso que hace la aplicacion."""
+
+    def __init__(self, connection):
+        self.connection = connection
+        self._rows = []
+        self._position = 0
+
+    def execute(self, sql, *params):
+        dao_sql = sql
+        for index in range(len(params)):
+            dao_sql = dao_sql.replace("?", f"[p{index}]", 1)
+        query = self.connection._database.CreateQueryDef("", dao_sql)
+        try:
+            for index, value in enumerate(params):
+                query.Parameters.Item(f"p{index}").Value = value
+            if sql.lstrip().upper().startswith("SELECT"):
+                recordset = query.OpenRecordset()
+                try:
+                    self._rows = self._read_rows(recordset)
+                finally:
+                    recordset.Close()
+            else:
+                query.Execute(DAO_DB_FAIL_ON_ERROR)
+                self._rows = []
+            self._position = 0
+            return self
+        finally:
+            query.Close()
+
+    @staticmethod
+    def _read_rows(recordset):
+        rows = []
+        field_count = int(recordset.Fields.Count)
+        while not recordset.EOF:
+            rows.append(tuple(recordset.Fields.Item(i).Value for i in range(field_count)))
+            recordset.MoveNext()
+        return rows
+
+    def fetchone(self):
+        if self._position >= len(self._rows):
+            return None
+        row = self._rows[self._position]
+        self._position += 1
+        return row
+
+    def fetchall(self):
+        rows = self._rows[self._position:]
+        self._position = len(self._rows)
+        return rows
+
+
+class DAOConnection:
+    """Adapta DAO.DBEngine.120 al subconjunto de la API de pyodbc usado aqui."""
+
+    def __init__(self, engine, database, solo_lectura=False, pythoncom_module=None):
+        self._engine = engine
+        self._database = database
+        self._pythoncom = pythoncom_module
+        self._workspace = engine.Workspaces.Item(0)
+        self._transaction_active = False
+        if not solo_lectura:
+            self._workspace.BeginTrans()
+            self._transaction_active = True
+
+    def cursor(self):
+        return DAOCursor(self)
+
+    def commit(self):
+        if self._transaction_active:
+            self._workspace.CommitTrans()
+            self._transaction_active = False
+
+    def rollback(self):
+        if self._transaction_active:
+            self._workspace.Rollback()
+            self._transaction_active = False
+
+    def close(self):
+        try:
+            if self._transaction_active:
+                self._workspace.Rollback()
+                self._transaction_active = False
+            self._database.Close()
+        finally:
+            if self._pythoncom is not None:
+                self._pythoncom.CoUninitialize()
+                self._pythoncom = None
 
 
 def recuperar_clave_jet4(ruta_mdb: str | Path) -> str:
@@ -47,35 +139,74 @@ def recuperar_clave_jet4(ruta_mdb: str | Path) -> str:
 
 
 def conectar_mdb(ruta_mdb: str | Path, solo_lectura: bool = False):
-    """Abre el MDB con el primer controlador Access compatible disponible."""
-    try:
-        import pyodbc
-    except ImportError as exc:
-        raise RuntimeError("Falta pyodbc. Ejecuta: pip install -r requirements.txt") from exc
-
+    """Abre el MDB probando ODBC y luego DAO, de menor a mayor compatibilidad."""
     ruta = Path(ruta_mdb).resolve()
     clave = recuperar_clave_jet4(ruta)
-    candidatos = [
-        "Microsoft Access Driver (*.mdb, *.accdb)",
-        "Microsoft Access Driver (*.mdb)",
-    ]
-    disponibles = set(pyodbc.drivers())
-    instalados = [driver for driver in candidatos if driver in disponibles]
-    if not instalados:
-        raise RuntimeError(
-            "El driver de Microsoft Access no esta instalado.\n"
-            f"Descargalo de: {ACCESS_ENGINE_URL}"
-        )
     errores = []
-    for driver in instalados:
-        partes = [f"DRIVER={{{driver}}};", f"DBQ={ruta};", f"PWD={clave};"]
-        if solo_lectura:
-            partes.append("READONLY=TRUE;")
-        try:
-            return pyodbc.connect("".join(partes), autocommit=False, timeout=10)
-        except pyodbc.Error as exc:
-            errores.append(str(exc))
+
+    try:
+        import pyodbc
+    except ImportError:
+        pyodbc = None
+
+    driver = "Microsoft Access Driver (*.mdb, *.accdb)"
+    if pyodbc is not None and driver in set(pyodbc.drivers()):
+        base = f"DRIVER={{{driver}}};DBQ={ruta};"
+        estrategias_odbc = [
+            ("pyodbc sin password", base),
+            ("pyodbc con PWD", base + f"PWD={clave};"),
+            ("pyodbc con Jet OLEDB Password", base + f"Jet OLEDB:Database Password={clave};"),
+        ]
+        for nombre, connection_string in estrategias_odbc:
+            if solo_lectura:
+                connection_string += "READONLY=TRUE;"
+            try:
+                conexion = pyodbc.connect(
+                    connection_string, autocommit=False, timeout=10
+                )
+                logging.info("MDB: conexion exitosa con %s", nombre)
+                return conexion
+            except pyodbc.Error as exc:
+                errores.append(f"{nombre}: {exc}")
+                logging.warning("MDB: fallo %s: %s", nombre, exc)
+    else:
+        errores.append("pyodbc: driver Microsoft Access no disponible")
+
+    try:
+        import pythoncom
+        import win32com.client
+    except ImportError as exc:
+        errores.append(f"DAO: pywin32 no esta instalado ({exc})")
+    else:
+        pythoncom.CoInitialize()
+        com_inicializado = True
+        for nombre, connect in (
+            ("DAO con password", ";PWD=" + clave),
+            ("DAO sin password", ""),
+        ):
+            database = None
+            try:
+                engine = win32com.client.Dispatch("DAO.DBEngine.120")
+                database = engine.OpenDatabase(str(ruta), False, solo_lectura, connect)
+                conexion = DAOConnection(
+                    engine, database, solo_lectura, pythoncom_module=pythoncom
+                )
+                com_inicializado = False
+                logging.info("MDB: conexion exitosa con %s", nombre)
+                return conexion
+            except Exception as exc:
+                if database is not None:
+                    try:
+                        database.Close()
+                    except Exception:
+                        pass
+                errores.append(f"{nombre}: {exc}")
+                logging.warning("MDB: fallo %s: %s", nombre, exc)
+        if com_inicializado:
+            pythoncom.CoUninitialize()
+
     raise RuntimeError(
-        "No se pudo abrir el archivo. Cierra Meet Manager e intenta de nuevo.\n"
-        + (errores[-1] if errores else "Error desconocido de Access.")
+        "No se pudo abrir el archivo con ODBC ni DAO. Cierra Meet Manager e intenta de nuevo.\n"
+        "Verifica que Microsoft Access Database Engine y pywin32 esten instalados.\n"
+        f"Access Engine: {ACCESS_ENGINE_URL}\n\n" + "\n".join(errores)
     )
