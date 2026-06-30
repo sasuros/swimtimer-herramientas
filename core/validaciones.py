@@ -1,6 +1,38 @@
 """Reglas de integridad previas a escribir un archivo Meet Manager."""
 
 
+def resumen_incremental(datos: dict, indices: dict) -> dict:
+    """Cuenta registros nuevos y existentes usando las claves de Meet Manager."""
+    atletas_existentes = indices.get("athletes", set())
+    entradas_existentes = indices.get("entries", set())
+    atletas = datos.get("athletes") or []
+    resultados = datos.get("results") or []
+    atletas_ya_existen = sum(
+        1 for atleta in atletas
+        if _entero(atleta.get("Ath_no")) in atletas_existentes
+    )
+    inscripciones_ya_existen = sum(
+        1 for resultado in resultados
+        if (_entero(resultado.get("Event_ptr")), _entero(resultado.get("Ath_no")))
+        in entradas_existentes
+    )
+    return {
+        "athletes_total": len(atletas),
+        "athletes_new": len(atletas) - atletas_ya_existen,
+        "athletes_existing": atletas_ya_existen,
+        "entries_total": len(resultados),
+        "entries_new": len(resultados) - inscripciones_ya_existen,
+        "entries_existing": inscripciones_ya_existen,
+    }
+
+
+def _entero(valor):
+    try:
+        return int(valor)
+    except (TypeError, ValueError):
+        return None
+
+
 def validar_importacion(datos: dict, indices: dict) -> dict:
     errores, avisos = [], []
     teams = datos.get("teams") or []
@@ -43,5 +75,9 @@ def validar_importacion(datos: dict, indices: dict) -> dict:
         entradas_json.add(clave)
         if clave in indices.get("entries", set()):
             avisos.append(f"La inscripcion evento {clave[0]} / nadador {clave[1]} ya existe y se omitira.")
-    return {"ok": not errores, "errors": errores, "warnings": avisos}
-
+    return {
+        "ok": not errores,
+        "errors": errores,
+        "warnings": avisos,
+        "incremental": resumen_incremental(datos, indices),
+    }

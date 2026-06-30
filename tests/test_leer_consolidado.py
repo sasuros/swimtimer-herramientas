@@ -51,7 +51,28 @@ class ConsolidadoTests(unittest.TestCase):
         self.assertTrue(any("no existe" in e for e in result["errors"]))
         self.assertTrue(any("duplicada" in e for e in result["errors"]))
 
+    def test_resumen_incremental_separa_nuevos_y_existentes(self):
+        datos = ejemplo()
+        datos["athletes"].append({
+            "Ath_no": 6002, "Last_name": "Rojas", "First_name": "Luis",
+            "Ath_Sex": "M", "Team_no": 6,
+        })
+        datos["results"].append({"Event_ptr": 2, "Ath_no": 6002})
+        indices = {
+            "teams": {6}, "athletes": {6001}, "events": {1, 2},
+            "entries": {(1, 6001)},
+        }
+
+        resumen = validar_importacion(datos, indices)["incremental"]
+        self.assertEqual(resumen, {
+            "athletes_total": 2,
+            "athletes_new": 1,
+            "athletes_existing": 1,
+            "entries_total": 2,
+            "entries_new": 1,
+            "entries_existing": 1,
+        })
+
 
 if __name__ == "__main__":
     unittest.main()
-

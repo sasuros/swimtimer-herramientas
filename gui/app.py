@@ -17,7 +17,7 @@ class SwimtimerApp:
         root.configure(bg=WHITE)
         root.minsize(780, 650)
         root.resizable(True, True)
-        alto = min(820, max(650, root.winfo_screenheight() - 100))
+        alto = min(1000, max(650, root.winfo_screenheight() - 40))
         centrar(root, 820, alto)
         self._header()
         self.contenedor = tk.Frame(root, bg=WHITE)

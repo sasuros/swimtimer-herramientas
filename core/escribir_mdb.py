@@ -69,11 +69,32 @@ def _insertar_si_no_existe(cursor, tabla, campos, registro, consulta, clave):
     return True
 
 
-def importar_consolidado(ruta_mdb: str | Path, datos: dict, progreso=None) -> dict:
+def _actualizar_atleta(cursor, registro):
+    campos = [campo for campo in ATHLETE_FIELDS if campo != "Ath_no"]
+    asignaciones = ", ".join(f"[{campo}] = ?" for campo in campos)
+    valores = [_normalizar_valor(campo, registro.get(campo)) for campo in campos]
+    cursor.execute(
+        f"UPDATE [Athlete] SET {asignaciones} WHERE [Ath_no] = ?",
+        *valores,
+        registro.get("Ath_no"),
+    )
+
+
+def importar_consolidado(
+    ruta_mdb: str | Path, datos: dict, progreso=None, actualizar_existentes=False
+) -> dict:
     """Crea backup y agrega equipos, atletas e inscripciones en una transaccion."""
     backup = crear_backup(ruta_mdb)
     conexion = None
-    conteos = {"teams": 0, "athletes": 0, "entries": 0, "skipped": 0}
+    conteos = {
+        "teams": 0,
+        "athletes": 0,
+        "athletes_updated": 0,
+        "athletes_skipped": 0,
+        "entries": 0,
+        "entries_skipped": 0,
+        "skipped": 0,
+    }
     try:
         try:
             conexion = conectar_mdb(ruta_mdb)
@@ -102,11 +123,21 @@ def importar_consolidado(ruta_mdb: str | Path, datos: dict, progreso=None) -> di
             if progreso:
                 progreso(actual, total, "Insertando equipos")
         for athlete in datos["athletes"]:
-            inserted = _insertar_si_no_existe(
-                cursor, "Athlete", ATHLETE_FIELDS, athlete,
-                "SELECT Ath_no FROM Athlete WHERE Ath_no = ?", (athlete.get("Ath_no"),),
-            )
-            conteos["athletes" if inserted else "skipped"] += 1
+            existe = cursor.execute(
+                "SELECT Ath_no FROM Athlete WHERE Ath_no = ?", athlete.get("Ath_no")
+            ).fetchone() is not None
+            if existe and actualizar_existentes:
+                _actualizar_atleta(cursor, athlete)
+                conteos["athletes_updated"] += 1
+            elif existe:
+                conteos["athletes_skipped"] += 1
+                conteos["skipped"] += 1
+            else:
+                _insertar_si_no_existe(
+                    cursor, "Athlete", ATHLETE_FIELDS, athlete,
+                    "SELECT Ath_no FROM Athlete WHERE Ath_no = ?", (athlete.get("Ath_no"),),
+                )
+                conteos["athletes"] += 1
             actual += 1
             if progreso:
                 progreso(actual, total, "Insertando nadadores")
@@ -116,7 +147,11 @@ def importar_consolidado(ruta_mdb: str | Path, datos: dict, progreso=None) -> di
                 "SELECT Event_ptr FROM Entry WHERE Event_ptr = ? AND Ath_no = ?",
                 (entry.get("Event_ptr"), entry.get("Ath_no")),
             )
-            conteos["entries" if inserted else "skipped"] += 1
+            if inserted:
+                conteos["entries"] += 1
+            else:
+                conteos["entries_skipped"] += 1
+                conteos["skipped"] += 1
             actual += 1
             if progreso:
                 progreso(actual, total, "Insertando inscripciones")
