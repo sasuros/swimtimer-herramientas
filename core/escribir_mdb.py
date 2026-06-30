@@ -80,8 +80,25 @@ def _actualizar_atleta(cursor, registro):
     )
 
 
+def _eliminar_atleta(cursor, ath_no):
+    entries = int(cursor.execute(
+        "SELECT COUNT(*) FROM Entry WHERE Ath_no = ?", ath_no
+    ).fetchone()[0])
+    existe = cursor.execute(
+        "SELECT Ath_no FROM Athlete WHERE Ath_no = ?", ath_no
+    ).fetchone() is not None
+    cursor.execute("DELETE FROM Entry WHERE Ath_no = ?", ath_no)
+    cursor.execute("DELETE FROM Athlete WHERE Ath_no = ?", ath_no)
+    return int(existe), entries
+
+
 def importar_consolidado(
-    ruta_mdb: str | Path, datos: dict, progreso=None, actualizar_existentes=False
+    ruta_mdb: str | Path,
+    datos: dict,
+    progreso=None,
+    actualizar_existentes=False,
+    atletas_modificados=None,
+    atletas_eliminar=None,
 ) -> dict:
     """Crea backup y agrega equipos, atletas e inscripciones en una transaccion."""
     backup = crear_backup(ruta_mdb)
@@ -91,8 +108,10 @@ def importar_consolidado(
         "athletes": 0,
         "athletes_updated": 0,
         "athletes_skipped": 0,
+        "athletes_deleted": 0,
         "entries": 0,
         "entries_skipped": 0,
+        "entries_deleted": 0,
         "skipped": 0,
     }
     try:
@@ -110,8 +129,19 @@ def importar_consolidado(
             for tabla in ("Team", "Athlete", "Entry")
         }
         teams = datos.get("teams") or []
-        total = len(teams) + len(datos["athletes"]) + len(datos["results"])
+        eliminar = {int(item) for item in (atletas_eliminar or [])}
+        modificados = None if atletas_modificados is None else {
+            int(item) for item in atletas_modificados
+        }
+        total = len(eliminar) + len(teams) + len(datos["athletes"]) + len(datos["results"])
         actual = 0
+        for ath_no in sorted(eliminar):
+            atletas_borrados, entries_borradas = _eliminar_atleta(cursor, ath_no)
+            conteos["entries_deleted"] += entries_borradas
+            conteos["athletes_deleted"] += atletas_borrados
+            actual += 1
+            if progreso:
+                progreso(actual, total, "Eliminando nadadores retirados")
         for team in teams:
             campos = ["Team_no", "Team_name", "Team_short", "Team_abbr"]
             inserted = _insertar_si_no_existe(
@@ -126,7 +156,8 @@ def importar_consolidado(
             existe = cursor.execute(
                 "SELECT Ath_no FROM Athlete WHERE Ath_no = ?", athlete.get("Ath_no")
             ).fetchone() is not None
-            if existe and actualizar_existentes:
+            debe_actualizar = modificados is None or int(athlete.get("Ath_no")) in modificados
+            if existe and actualizar_existentes and debe_actualizar:
                 _actualizar_atleta(cursor, athlete)
                 conteos["athletes_updated"] += 1
             elif existe:
@@ -161,8 +192,8 @@ def importar_consolidado(
         }
         esperados = {
             "Team": iniciales["Team"] + conteos["teams"],
-            "Athlete": iniciales["Athlete"] + conteos["athletes"],
-            "Entry": iniciales["Entry"] + conteos["entries"],
+            "Athlete": iniciales["Athlete"] - conteos["athletes_deleted"] + conteos["athletes"],
+            "Entry": iniciales["Entry"] - conteos["entries_deleted"] + conteos["entries"],
         }
         discrepancias = [
             f"{tabla}: esperado {esperados[tabla]}, obtenido {finales[tabla]}"

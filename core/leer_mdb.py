@@ -3,6 +3,7 @@
 import logging
 from pathlib import Path
 
+from core.comparar import COMPARISON_FIELDS
 from core.jet4 import conectar_mdb, recuperar_clave_jet4
 
 STROKE_MAP = {
@@ -246,28 +247,57 @@ def leer_indices_mdb(ruta_mdb: str | Path) -> dict:
         athletes = _filas_access_parser(database, "Athlete")
         events = _filas_access_parser(database, "Event")
         entries = _filas_access_parser(database, "Entry")
+        athlete_records = [
+            {"Ath_no": int(_valor(row, 0, "Ath_no")), **{
+                campo: _valor(row, indice + 1, campo)
+                for indice, campo in enumerate(COMPARISON_FIELDS)
+            }}
+            for row in athletes
+        ]
+        entry_records = [
+            {"Event_ptr": int(_valor(row, 0, "Event_ptr")),
+             "Ath_no": int(_valor(row, 1, "Ath_no"))}
+            for row in entries
+        ]
+        athlete_teams = {item["Ath_no"]: int(item.get("Team_no") or 0) for item in athlete_records}
+        entries_by_team = {}
+        for entry in entry_records:
+            entries_by_team.setdefault(athlete_teams.get(entry["Ath_no"], 0), []).append(entry)
         return {
             "teams": {int(_valor(row, 0, "Team_no")) for row in teams},
             "athletes": {int(_valor(row, 0, "Ath_no")) for row in athletes},
             "events": {int(_valor(row, 0, "Event_ptr")) for row in events},
-            "entries": {
-                (int(_valor(row, 0, "Event_ptr")), int(_valor(row, 1, "Ath_no")))
-                for row in entries
-            },
+            "entries": {(item["Event_ptr"], item["Ath_no"]) for item in entry_records},
+            "athlete_records": athlete_records,
+            "entry_records": entry_records,
+            "entries_by_team": entries_by_team,
         }
     except Exception as exc:
         logging.warning("MDB: access-parser no pudo leer indices: %s", exc)
     conexion = conectar_mdb(ruta_mdb, solo_lectura=True)
     try:
         cursor = conexion.cursor()
+        athlete_columns = ["Ath_no", *COMPARISON_FIELDS]
+        athlete_rows = cursor.execute(
+            "SELECT " + ", ".join(f"[{campo}]" for campo in athlete_columns) + " FROM Athlete"
+        ).fetchall()
+        athlete_records = [dict(zip(athlete_columns, row)) for row in athlete_rows]
+        entry_records = [
+            {"Event_ptr": int(row[0]), "Ath_no": int(row[1])}
+            for row in cursor.execute("SELECT Event_ptr, Ath_no FROM Entry").fetchall()
+        ]
+        athlete_teams = {int(item["Ath_no"]): int(item.get("Team_no") or 0) for item in athlete_records}
+        entries_by_team = {}
+        for entry in entry_records:
+            entries_by_team.setdefault(athlete_teams.get(entry["Ath_no"], 0), []).append(entry)
         return {
             "teams": {int(row[0]) for row in cursor.execute("SELECT Team_no FROM Team").fetchall()},
             "athletes": {int(row[0]) for row in cursor.execute("SELECT Ath_no FROM Athlete").fetchall()},
             "events": {int(row[0]) for row in cursor.execute("SELECT Event_ptr FROM Event").fetchall()},
-            "entries": {
-                (int(row[0]), int(row[1]))
-                for row in cursor.execute("SELECT Event_ptr, Ath_no FROM Entry").fetchall()
-            },
+            "entries": {(item["Event_ptr"], item["Ath_no"]) for item in entry_records},
+            "athlete_records": athlete_records,
+            "entry_records": entry_records,
+            "entries_by_team": entries_by_team,
         }
     finally:
         conexion.close()

@@ -21,6 +21,9 @@ class ImportarFrame(tk.Frame):
     def __init__(self, master, volver):
         super().__init__(master, bg=WHITE)
         self.json_path = self.mdb_path = self.datos = self.indices = None
+        self.comparison = None
+        self.changes_open = False
+        self.deleted_vars = {}
         top = tk.Frame(self, bg=WHITE); top.pack(fill="x", padx=28, pady=(12, 4))
         boton_secundario(top, "← Volver", volver).pack(side="left")
         tk.Label(self, text="IMPORTAR INSCRIPCIONES", bg=WHITE, fg=TITLE,
@@ -42,6 +45,12 @@ class ImportarFrame(tk.Frame):
         self.summary.pack(fill="x")
         self.detail_button = boton_secundario(self.section3, "Ver detalle", self.detalle, state="disabled")
         self.detail_button.pack(anchor="w", pady=(8, 4))
+        self.changes_button = boton_secundario(
+            self.section3, "Ver cambios por club", self.toggle_changes
+        )
+        self.changes_panel = tk.Frame(self.section3, bg=WHITE)
+        self.deleted_panel = tk.Frame(self.section3, bg=WHITE)
+        self.delete_mode = tk.StringVar(value="keep")
         self.update_existing_var = tk.BooleanVar(value=False)
         self.update_existing = tk.Checkbutton(
             self.section3,
@@ -117,6 +126,8 @@ class ImportarFrame(tk.Frame):
         self.summary.config(text=text, fg=SUCCESS if result["ok"] else ERROR,
                             font=("Segoe UI", 10, "bold"))
         self.detail_button.config(state="normal")
+        self.comparison = result.get("comparison") or {}
+        self._render_comparison()
         if result["ok"]:
             configurar_boton_primario(self.import_button, True)
         else:
@@ -139,24 +150,153 @@ class ImportarFrame(tk.Frame):
             text.insert("end", "\nAVISOS\n" + "\n".join(self.validacion["warnings"]))
         text.config(state="disabled")
 
+    def toggle_changes(self):
+        self.changes_open = not self.changes_open
+        self.changes_button.config(
+            text="Ocultar cambios por club" if self.changes_open else "Ver cambios por club"
+        )
+        if self.changes_open:
+            self.changes_panel.pack(fill="x", pady=(6, 8), before=self.update_existing)
+        else:
+            self.changes_panel.pack_forget()
+
+    def _render_comparison(self):
+        for child in self.changes_panel.winfo_children():
+            child.destroy()
+        for child in self.deleted_panel.winfo_children():
+            child.destroy()
+        self.changes_panel.pack_forget()
+        self.deleted_panel.pack_forget()
+        self.changes_button.pack_forget()
+        self.deleted_vars = {}
+        self.delete_mode.set("keep")
+        self.changes_open = False
+        self.changes_button.config(text="Ver cambios por club")
+        if not self.comparison.get("has_previous_data"):
+            return
+
+        self.changes_button.pack(anchor="w", pady=(4, 4), before=self.update_existing)
+        for club in self.comparison.get("clubs", []):
+            card = tk.Frame(
+                self.changes_panel, bg=CARD, highlightbackground="#D1D5DB",
+                highlightthickness=1, padx=10, pady=8,
+            )
+            card.pack(fill="x", pady=(0, 6))
+            tk.Label(
+                card, text=f"{club['Team_name']} (#{club['Team_no']})",
+                bg=CARD, fg=TITLE, anchor="w", font=("Segoe UI", 10, "bold"),
+            ).pack(fill="x")
+            diferencias = club["new"] or club["removed"] or club["modified"]
+            if not diferencias:
+                tk.Label(
+                    card, text=f"Sin cambios ({len(club['unchanged'])} nadadores)",
+                    bg=CARD, fg=MUTED, anchor="w", font=("Segoe UI", 9),
+                ).pack(fill="x", pady=(4, 0))
+                continue
+            tk.Label(
+                card, text=f"{len(club['unchanged'])} sin cambios", bg=CARD,
+                fg=MUTED, anchor="w", font=("Segoe UI", 9),
+            ).pack(fill="x", pady=(4, 2))
+            for athlete in club["new"]:
+                self._change_row(card, "✅ Nuevo", athlete, "#ECFDF5", SUCCESS)
+            for athlete in club["removed"]:
+                self._change_row(card, "⚠️ Eliminado", athlete, "#FEF3C7", WARNING)
+            for athlete in club["modified"]:
+                campos = ", ".join(athlete.get("changed_labels") or [])
+                self._change_row(card, f"📝 Modificado ({campos})", athlete, "#EFF6FF", "#1D4ED8")
+
+        removed = self.comparison.get("removed") or []
+        if removed:
+            self._render_deleted_selector(removed)
+
+    def _change_row(self, parent, prefix, athlete, background, foreground):
+        tk.Label(
+            parent, text=f"{prefix}: {self._athlete_text(athlete)}",
+            bg=background, fg=foreground, anchor="w", justify="left",
+            font=("Segoe UI", 9), padx=7, pady=5,
+        ).pack(fill="x", pady=1)
+
+    @staticmethod
+    def _athlete_text(athlete):
+        return (
+            f"{athlete.get('Last_name', '')}, {athlete.get('First_name', '')} "
+            f"({athlete.get('Ath_Sex', '—')}, {athlete.get('Ath_age', '—')} años)"
+        )
+
+    def _render_deleted_selector(self, athletes):
+        self.deleted_panel.configure(
+            bg="#FEF3C7", highlightbackground="#F59E0B", highlightthickness=1,
+            padx=12, pady=10,
+        )
+        tk.Label(
+            self.deleted_panel, text="Nadadores que ya no están en la inscripción:",
+            bg="#FEF3C7", fg=WARNING, anchor="w", font=("Segoe UI", 10, "bold"),
+        ).pack(fill="x")
+        for athlete in athletes:
+            ath_no = int(athlete["Ath_no"])
+            variable = tk.BooleanVar(value=True)
+            self.deleted_vars[ath_no] = variable
+            tk.Checkbutton(
+                self.deleted_panel,
+                text=f"{athlete.get('Last_name', '')}, {athlete.get('First_name', '')} — {athlete.get('Team_name')} (#{athlete.get('Team_no')})",
+                variable=variable, bg="#FEF3C7", fg=WARNING,
+                activebackground="#FEF3C7", activeforeground=WARNING,
+                selectcolor=WHITE, anchor="w", font=("Segoe UI", 9),
+            ).pack(fill="x")
+        tk.Label(
+            self.deleted_panel, text="¿Qué hacer con ellos?", bg="#FEF3C7",
+            fg=TITLE, anchor="w", font=("Segoe UI", 10, "bold"),
+        ).pack(fill="x", pady=(8, 2))
+        for value, text in (
+            ("keep", "Mantener en el .mdb (no borrar nada)"),
+            ("delete", "Eliminar del .mdb (sincronizar con la inscripción)"),
+        ):
+            tk.Radiobutton(
+                self.deleted_panel, text=text, variable=self.delete_mode, value=value,
+                bg="#FEF3C7", fg=TEXT, activebackground="#FEF3C7",
+                selectcolor=WHITE, anchor="w", font=("Segoe UI", 9),
+            ).pack(fill="x")
+        tk.Label(
+            self.deleted_panel,
+            text="Si eliges eliminar, se borrarán de Athlete y Entry después de crear el backup.",
+            bg="#FEF3C7", fg=WARNING, anchor="w", justify="left", font=("Segoe UI", 9),
+        ).pack(fill="x", pady=(4, 0))
+        self.deleted_panel.pack(fill="x", pady=(6, 8), before=self.update_existing)
+
     def importar(self):
+        eliminar = []
+        if self.delete_mode.get() == "delete":
+            eliminar = [ath_no for ath_no, variable in self.deleted_vars.items() if variable.get()]
+            if eliminar and not messagebox.askyesno(
+                "Confirmar eliminación",
+                f"¿Eliminar {len(eliminar)} nadadores del .mdb? Esta acción se incluirá en el backup.",
+                parent=self,
+            ):
+                return
         if not messagebox.askyesno("Confirmar importación",
                                    "Se creará una copia de seguridad automática antes de escribir.\n\n¿Continuar?", parent=self):
             return
         self._busy("Creando backup e importando…")
         actualizar = self.update_existing_var.get()
-        threading.Thread(target=self._import_worker, args=(actualizar,), daemon=True).start()
+        modificados = set(self.comparison.get("modified_ids") or [])
+        threading.Thread(
+            target=self._import_worker,
+            args=(actualizar, modificados, eliminar),
+            daemon=True,
+        ).start()
 
     def _progress(self, current, total, text):
         self.after(0, self.status.config, {"text": f"{text}: {current}/{total}"})
 
-    def _import_worker(self, actualizar_existentes):
+    def _import_worker(self, actualizar_existentes, atletas_modificados, atletas_eliminar):
         try:
             result = importar_consolidado(
                 self.mdb_path,
                 self.datos,
                 self._progress,
                 actualizar_existentes=actualizar_existentes,
+                atletas_modificados=atletas_modificados,
+                atletas_eliminar=atletas_eliminar,
             )
             self.after(0, self._done, result)
         except Exception as exc:
@@ -168,8 +308,10 @@ class ImportarFrame(tk.Frame):
             f"Nadadores insertados: {result['athletes']}\n"
             f"Nadadores actualizados: {result['athletes_updated']}\n"
             f"Nadadores omitidos (ya existían): {result['athletes_skipped']}\n"
+            f"Nadadores eliminados del .mdb: {result['athletes_deleted']}\n"
             f"Inscripciones insertadas: {result['entries']}\n"
-            f"Inscripciones omitidas (ya existían): {result['entries_skipped']}\n\n"
+            f"Inscripciones omitidas (ya existían): {result['entries_skipped']}\n"
+            f"Inscripciones eliminadas del .mdb: {result['entries_deleted']}\n\n"
             f"Backup guardado en:\n{result['backup']}\n\nAbre Meet Manager para verificar.", parent=self)
 
     def _error(self, detail):

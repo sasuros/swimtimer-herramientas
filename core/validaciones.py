@@ -1,5 +1,7 @@
 """Reglas de integridad previas a escribir un archivo Meet Manager."""
 
+from core.comparar import comparar_por_club
+
 
 def resumen_incremental(datos: dict, indices: dict) -> dict:
     """Cuenta registros nuevos y existentes usando las claves de Meet Manager."""
@@ -80,4 +82,5 @@ def validar_importacion(datos: dict, indices: dict) -> dict:
         "errors": errores,
         "warnings": avisos,
         "incremental": resumen_incremental(datos, indices),
+        "comparison": comparar_por_club(datos, indices),
     }
